@@ -19,32 +19,103 @@
 #include <Wire.h>
 #include <Adafruit_L3GD20.h>
 
-// Comment this next line to use SPI
-#define USE_I2C
-
-#ifdef USE_I2C
-// The default constructor uses I2C
 Adafruit_L3GD20 gyro;
-#else
-// To use SPI, you have to define the pins
-#define GYRO_CS 4 // labeled CS
-#define GYRO_DO 5 // labeled SA0
-#define GYRO_DI 6  // labeled SDA
-#define GYRO_CLK 7 // labeled SCL
-Adafruit_L3GD20 gyro(GYRO_CS, GYRO_DO, GYRO_DI, GYRO_CLK);
-#endif
 
-int button = 13;
+/*
+ * Data structures
+ */
 
-int volumePlus = 2;
-int volumeMinus = 3;
-int playPause = 4;
+struct ButtonsPins {
+  short reset;
+  short volumeUp;
+  short volumeDown;
+  short playPause;
+
+  ButtonsPins(){
+    reset = 13;
+    volumeUp = 2;
+    volumeDown = 3;
+    playPause = 4;
+
+    pinMode(reset, INPUT);
+    pinMode(volumeUp, OUTPUT);
+    pinMode(volumeDown, OUTPUT);
+    pinMode(playPause, OUTPUT);
+  }
+};
+
+struct Axis
+{
+  int absV;
+  int treshold;
+  bool negative;
+  bool positive;
+
+  Axis(): absV(0), treshold(500), negative(false), positive(false){}
+};
+
+struct Values
+{
+  Axis x;
+  Axis y;
+  Axis z;
+
+  Values(){
+    x = Axis();
+    y = Axis();
+    z = Axis();
+  }
+};
+
+/*
+ * Global variables
+ */
+ButtonsPins pins;
+Values val;
+
+/*
+ * Code
+ */
+void resetAbsoluteValues(){
+  val.x.absV = 0;
+  val.y.absV = 0;
+  val.z.absV = 0;
+}
+
+void readAndWriteValues(){
+   gyro.read();
+   val.x.absV += (int)gyro.data.x; 
+   val.y.absV += (int)gyro.data.y; 
+   val.z.absV += (int)gyro.data.z; 
+}
+
+void checkButtonsInteruptions(){
+   if (digitalRead(pins.reset) == HIGH) {
+    Serial.println("Button pressed");
+    resetAbsoluteValues();
+  }
+}
+
+void triggerButtons(short btnA, short btnB, int ms){
+  digitalWrite(btnA, HIGH);
+  digitalWrite(btnB, HIGH);
+  delay(ms);
+  digitalWrite(btnB, LOW);
+  digitalWrite(btnA, LOW);
+}
+
+void triggerButton(short btn, int ms){
+  digitalWrite(btn, HIGH);
+  delay(ms);
+  digitalWrite(btn, LOW);
+}
 
 void setup()
 {
   Serial.begin(9600);
-  pinMode(button, INPUT);
-
+  pins = ButtonsPins();
+  val = Values();
+  
   // Try to initialise and warn if we couldn't detect the chip
   if (!gyro.begin(gyro.L3DS20_RANGE_250DPS))
     //if (!gyro.begin(gyro.L3DS20_RANGE_500DPS))
@@ -54,70 +125,44 @@ void setup()
     while (1);
   }
 }
-int absoluteX = 0;
-int absoluteY = 0;
-int absoluteZ = 0;
-int offset = 500;
-bool flagX = true;
-bool flagXPlus = true;
-bool flagZ = true;
-bool flagZPlus = true;
+
 
 void loop()
 {
-  if (digitalRead(button) == HIGH) {
-    Serial.println("button pressed");
-    absoluteX = 0;
-    absoluteZ = 0;
-  }
-
-  gyro.read();
-  absoluteX = absoluteX + (int)gyro.data.x;
-  absoluteZ = absoluteZ + (int)gyro.data.z;
-  //Serial.print("X: "); Serial.print((int)absoluteX);   Serial.println(" ");
-  //Serial.print("Z: "); Serial.print((int)absoluteZ);   Serial.println(" ");
+  checkButtonsInteruptions();
   
+  readAndWriteValues();  
 
-  if (absoluteX > offset && flagXPlus ) {
+  if (val.x.absV > val.x.treshold && val.x.positive ) {
     Serial.println("X +");
-    digitalWrite(volumePlus, HIGH);
-    delay(50);
-    digitalWrite(volumePlus, LOW);
-    flagXPlus = false;
-  } else if (absoluteX < offset ) {
-    flagXPlus = true;
+    triggerButton(pins.volumeUp,50);
+    val.x.positive = false;
+  } else if (val.x.absV < val.x.treshold ) {
+    val.x.positive = true;
   }
 
-  if (absoluteX < -offset && flagX ) {
+  if (val.x.absV < -val.x.treshold && val.x.negative ) {
     Serial.println("X -");
-    digitalWrite(volumeMinus, HIGH);
-    delay(50);
-    digitalWrite(volumeMinus, LOW);
-    flagX = false;
-  } else if (absoluteX > -offset ) {
-    flagX = true;
+    triggerButton(pins.volumeDown,50);
+    val.x.negative = false;
+  } else if (val.x.absV > -val.x.treshold ) {
+    val.x.negative = true;
   }
 
-  if (absoluteZ > offset && flagZPlus ) {
+  if (val.z.absV > val.z.treshold && val.z.positive ) {
     Serial.println("Z +");
-    digitalWrite(playPause, HIGH);
-    delay(50);
-    digitalWrite(playPause, LOW);
-    flagZPlus = false;
-  } else if (absoluteZ < offset ) {
-    flagZPlus = true;
+    triggerButton(pins.playPause,50);
+    val.z.positive = false;
+  } else if (val.z.absV < val.z.treshold ) {
+    val.z.positive = true;
   }
 
-  if (absoluteZ < -offset && flagZ ) {
+  if (val.z.absV < -val.z.treshold && val.z.negative ) {
     Serial.println("Z - ");
-    digitalWrite(volumePlus, HIGH);
-    digitalWrite(volumeMinus, HIGH);
-    delay(50);
-    digitalWrite(volumePlus, LOW);
-    digitalWrite(volumeMinus, LOW);
-    flagZ = false;
-  } else if (absoluteZ > -offset ) {
-    flagZ = true;
+    triggerButtons(pins.volumeUp,pins.volumeDown, 50);
+    val.z.negative = false;
+  } else if (val.z.absV > -val.z.treshold ) {
+    val.z.negative = true;
   }
 
   delay(50);
